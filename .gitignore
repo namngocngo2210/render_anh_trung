@@ -1,0 +1,6 @@
+/app.spec
+/build
+/config.json
+/dist
+/__MACOSX
+/__pycache__

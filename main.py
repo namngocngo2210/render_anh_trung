@@ -14,7 +14,7 @@ def load_config(config_file):
 
 
 def get_mp3_duration(file_path):
-    """Get the duration of an MP3 file using ffprobe."""
+    """Lấy độ dài của file MP3 sử dụng ffprobe."""
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
@@ -26,27 +26,35 @@ def get_mp3_duration(file_path):
         )
         return float(result.stdout.strip())
     except Exception as e:
-        print(f"Error getting duration for {file_path}: {e}")
+        print(f"Lỗi khi lấy độ dài cho {file_path}: {e}")
         return None
 
 
-def trim_mp3(audio_folder, output_file, target_length):
-    """Select and concatenate MP3 files to match the specified length using FFmpeg."""
+def trim_mp3(audio_folder, output_file, target_length, crossfade=False, crossfade_duration=2.0):
+    """Chọn và ghép các file MP3 để đạt độ dài mong muốn sử dụng FFmpeg.
+
+    Args:
+        audio_folder: Đường dẫn đến thư mục chứa file MP3
+        output_file: Đường dẫn file đầu ra
+        target_length: Độ dài mục tiêu tính bằng giây
+        crossfade: Nếu True, áp dụng hiệu ứng chuyển mượt giữa các file audio
+        crossfade_duration: Độ dài crossfade tính bằng giây
+    """
     audio_files = glob.glob(os.path.join(audio_folder, "*.mp3"))
     if not audio_files:
-        raise FileNotFoundError(f"No MP3 files found in {audio_folder}")
+        raise FileNotFoundError(f"Không tìm thấy file MP3 trong {audio_folder}")
 
-    # Shuffle the list of MP3 files
+    # Xáo trộn danh sách file MP3
     random.shuffle(audio_files)
 
     total_duration = 0
     concat_list = []
 
-    # Iterate through the files and calculate their durations
+    # Duyệt qua các file và tính độ dài của chúng
     for audio_file in audio_files:
         duration = get_mp3_duration(audio_file)
         if duration is None:
-            print(f"Skipping invalid file: {audio_file}")
+            print(f"Bỏ qua file không hợp lệ: {audio_file}")
             continue
 
         if total_duration + duration > target_length:
@@ -59,38 +67,140 @@ def trim_mp3(audio_folder, output_file, target_length):
             total_duration += duration
 
     if total_duration < target_length:
-        raise RuntimeError("Not enough valid MP3 files to reach the target length.")
+        raise RuntimeError("Không đủ file MP3 hợp lệ để đạt độ dài mục tiêu.")
 
-    # Create a temporary file listing the files to concatenate
+    # Tạo file tạm liệt kê các file cần ghép
     concat_list_file = os.path.join(audio_folder, "concat_list.txt")
     try:
         with open(concat_list_file, "w") as f:
             for audio_file, duration in concat_list:
-                abs_path = os.path.abspath(audio_file).replace("\\", "/")  # Ensure proper path formatting
+                abs_path = os.path.abspath(audio_file).replace("\\", "/")  # Đảm bảo định dạng đường dẫn đúng
                 if duration:
                     f.write(f"file '{abs_path}'\ninpoint 0\noutpoint {duration}\n")
                 else:
                     f.write(f"file '{abs_path}'\n")
     except Exception as e:
-        print(f"Error creating concat list: {e}")
-        input("Press any key to close...")
+        print(f"Lỗi khi tạo danh sách ghép: {e}")
+        input("Nhấn phím bất kỳ để đóng...")
         return
 
-    # Use FFmpeg to concatenate the files and trim to the target length
+    # Sử dụng FFmpeg để ghép các file và cắt theo độ dài mục tiêu
     try:
-        print("Concatenating audio files...")
-        subprocess.run([
-            "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-t", str(target_length), "-c", "copy",
-            output_file
-        ], check=True)
-        print(f"Concatenated audio saved to: {output_file}")
+        print("Đang ghép các file audio...")
+        if crossfade and len(concat_list) > 1:
+            # Sử dụng crossfade giữa các file
+            # Xây dựng filter_complex cho crossfade
+            filter_parts = []
+            for i, (audio_file, duration) in enumerate(concat_list):
+                abs_path = os.path.abspath(audio_file).replace("\\", "/")
+                if duration:
+                    filter_parts.append(f"[{i}:a]atrim=0:{duration},asetpts=PTS-STARTPTS[a{i}]")
+                else:
+                    filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+
+            # Xây dựng chuỗi crossfade
+            crossfade_chain = ""
+            for i in range(len(concat_list) - 1):
+                if i == 0:
+                    crossfade_chain += f"[a{i}][a{i+1}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[m{i}]"
+                else:
+                    crossfade_chain += f";[m{i-1}][a{i+1}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[m{i}]"
+
+            # Ghép tất cả lại
+            filter_complex = ";".join(filter_parts) + ";" + crossfade_chain
+
+            # Xây dựng input list
+            inputs = []
+            for audio_file, duration in concat_list:
+                abs_path = os.path.abspath(audio_file).replace("\\", "/")
+                inputs.extend(["-i", abs_path])
+
+            # Thêm -map để chỉ định output từ filter_complex
+            cmd = ["ffmpeg"] + inputs + ["-filter_complex", filter_complex, "-map", f"[m{len(concat_list)-2}]", "-t", str(target_length), "-c:a", "libmp3lame", "-q:a", "2", output_file]
+            print(f"Đang chạy crossfade với {len(concat_list)} file...")
+            subprocess.run(cmd, check=True)
+        else:
+            # Sử dụng concat đơn giản không có crossfade
+            subprocess.run([
+                "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-t", str(target_length), "-c", "copy",
+                output_file
+            ], check=True)
+        print(f"Audio đã ghép được lưu vào: {output_file}")
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg error: {e}")
-        input("Press any key to close...")
+        print(f"Lỗi FFmpeg: {e}")
+        input("Nhấn phím bất kỳ để đóng...")
     finally:
-        # Cleanup temporary files
+        # Dọn dẹp file tạm
         if os.path.exists(concat_list_file):
             os.remove(concat_list_file)
+
+
+def concat_full_mp3(audio_folder, output_file, order="random", crossfade=False, crossfade_duration=2.0):
+    """Ghép toàn bộ file MP3 trong thư mục thành một dải audio duy nhất.
+
+    Args:
+        audio_folder: Đường dẫn đến thư mục chứa file MP3
+        output_file: Đường dẫn file đầu ra
+        order: "random" để xáo trộn, "sequential" để ghép theo thứ tự tên file
+        crossfade: Nếu True, áp dụng hiệu ứng chuyển mượt giữa các file audio
+        crossfade_duration: Độ dài crossfade tính bằng giây
+
+    Returns:
+        Độ dài (giây) của audio đã ghép.
+    """
+    audio_files = glob.glob(os.path.join(audio_folder, "*.mp3"))
+    if not audio_files:
+        raise FileNotFoundError(f"Không tìm thấy file MP3 trong {audio_folder}")
+
+    if order == "sequential":
+        audio_files.sort()
+    else:
+        random.shuffle(audio_files)
+
+    print(f"Đang ghép full {len(audio_files)} file MP3 (thứ tự: {order})...")
+
+    if crossfade and len(audio_files) > 1:
+        # Xây dựng filter_complex cho crossfade toàn bộ file
+        filter_parts = []
+        inputs = []
+        for i, audio_file in enumerate(audio_files):
+            abs_path = os.path.abspath(audio_file).replace("\\", "/")
+            inputs.extend(["-i", abs_path])
+            filter_parts.append(f"[{i}:a]asetpts=PTS-STARTPTS[a{i}]")
+
+        crossfade_chain = ""
+        for i in range(len(audio_files) - 1):
+            if i == 0:
+                crossfade_chain += f"[a{i}][a{i+1}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[m{i}]"
+            else:
+                crossfade_chain += f";[m{i-1}][a{i+1}]acrossfade=d={crossfade_duration}:c1=tri:c2=tri[m{i}]"
+
+        filter_complex = ";".join(filter_parts) + ";" + crossfade_chain
+        cmd = ["ffmpeg"] + inputs + [
+            "-filter_complex", filter_complex, "-map", f"[m{len(audio_files)-2}]",
+            "-c:a", "libmp3lame", "-q:a", "2", output_file
+        ]
+        subprocess.run(cmd, check=True)
+    else:
+        # Concat đơn giản không re-encode
+        concat_list_file = os.path.join(audio_folder, "concat_list.txt")
+        try:
+            with open(concat_list_file, "w") as f:
+                for audio_file in audio_files:
+                    abs_path = os.path.abspath(audio_file).replace("\\", "/")
+                    f.write(f"file '{abs_path}'\n")
+            subprocess.run([
+                "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list_file, "-c", "copy", output_file
+            ], check=True)
+        finally:
+            if os.path.exists(concat_list_file):
+                os.remove(concat_list_file)
+
+    duration = get_mp3_duration(output_file)
+    if duration is None:
+        raise RuntimeError(f"Không đọc được độ dài audio đã ghép: {output_file}")
+    print(f"Audio full đã ghép được lưu vào: {output_file} ({duration:.0f} giây)")
+    return duration
 
 
 def concat_random_videos(video_folder, start_video, output_path, n_random=3):
@@ -123,7 +233,7 @@ def concat_random_videos(video_folder, start_video, output_path, n_random=3):
             print("🧹 Đã xóa file tạm file_list.txt")
 
 def loop_mp4(input_file, output_file, length):
-    # Get the video duration
+    # Lấy độ dài video
     result = subprocess.run(
         [
             "ffprobe", "-i", input_file, "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0"
@@ -133,9 +243,9 @@ def loop_mp4(input_file, output_file, length):
         check=True
     )
     duration = float(result.stdout.strip())
-    loops = math.ceil(length / duration)  # Calculate the number of loops needed
+    loops = math.ceil(length / duration)  # Tính số lần lặp cần thiết
 
-    print(f"Looping video: {input_file} -> {output_file} ({loops} loops)")
+    print(f"Đang lặp video: {input_file} -> {output_file} ({loops} lần lặp)")
     subprocess.run(
         [
             "ffmpeg", "-stream_loop", str(loops - 1), "-i", input_file, "-t", str(length), "-c", "copy", output_file
@@ -144,33 +254,33 @@ def loop_mp4(input_file, output_file, length):
 
 
 def loop_bgm_audio(bgm_source, output_file, target_length, volume=0.3, is_file=False):
-    """Loop BGM to target length with volume adjustment.
-    
+    """Lặp BGM đến độ dài mục tiêu với điều chỉnh âm lượng.
+
     Args:
-        bgm_source: Either a folder path (random selection) or a file path (fixed file)
-        output_file: Output file path
-        target_length: Target duration in seconds
-        volume: Volume adjustment (0.0-1.0)
-        is_file: If True, bgm_source is a file path; if False, it's a folder path
+        bgm_source: Đường dẫn thư mục (chọn ngẫu nhiên) hoặc đường dẫn file (file cố định)
+        output_file: Đường dẫn file đầu ra
+        target_length: Độ dài mục tiêu tính bằng giây
+        volume: Điều chỉnh âm lượng (0.0-1.0)
+        is_file: Nếu True, bgm_source là đường dẫn file; nếu False, là đường dẫn thư mục
     """
     if is_file:
-        # Use the specified file directly
+        # Sử dụng file được chỉ định trực tiếp
         if not os.path.isfile(bgm_source):
-            print(f"BGM file not found: {bgm_source}, skipping BGM...")
+            print(f"Không tìm thấy file BGM: {bgm_source}, bỏ qua BGM...")
             return None
         bgm_file = bgm_source
-        print(f"Using fixed BGM: {bgm_file}")
+        print(f"Sử dụng BGM cố định: {bgm_file}")
     else:
-        # Random selection from folder
+        # Chọn ngẫu nhiên từ thư mục
         bgm_files = glob.glob(os.path.join(bgm_source, "*.mp3"))
         if not bgm_files:
-            print(f"No BGM files found in {bgm_source}, skipping BGM...")
+            print(f"Không tìm thấy file BGM trong {bgm_source}, bỏ qua BGM...")
             return None
         bgm_file = random.choice(bgm_files)
-        print(f"Selected random BGM: {bgm_file}")
-    
+        print(f"Đã chọn BGM ngẫu nhiên: {bgm_file}")
+
     try:
-        # Loop BGM to target length with volume adjustment
+        # Lặp BGM đến độ dài mục tiêu với điều chỉnh âm lượng
         subprocess.run([
             "ffmpeg", "-stream_loop", "-1", "-i", bgm_file,
             "-t", str(target_length),
@@ -178,16 +288,16 @@ def loop_bgm_audio(bgm_source, output_file, target_length, volume=0.3, is_file=F
             "-c:a", "libmp3lame", "-q:a", "2",
             output_file
         ], check=True)
-        print(f"BGM looped and saved to: {output_file}")
+        print(f"BGM đã lặp và lưu vào: {output_file}")
         return output_file
     except subprocess.CalledProcessError as e:
-        print(f"Error processing BGM: {e}")
+        print(f"Lỗi khi xử lý BGM: {e}")
         return None
 
 
 def mix_audio(main_audio, bgm_audio, output_file):
-    """Mix main audio with background music."""
-    print(f"Mixing audio: {main_audio} + {bgm_audio} -> {output_file}")
+    """Trộn audio chính với nhạc nền."""
+    print(f"Đang trộn audio: {main_audio} + {bgm_audio} -> {output_file}")
     try:
         subprocess.run([
             "ffmpeg", "-i", main_audio, "-i", bgm_audio,
@@ -195,16 +305,16 @@ def mix_audio(main_audio, bgm_audio, output_file):
             "-c:a", "libmp3lame", "-q:a", "2",
             output_file
         ], check=True)
-        print(f"Mixed audio saved to: {output_file}")
+        print(f"Audio đã trộn được lưu vào: {output_file}")
         return output_file
     except subprocess.CalledProcessError as e:
-        print(f"Error mixing audio: {e}")
+        print(f"Lỗi khi trộn audio: {e}")
         return None
 
 
 def merge_audio_video(video_file, audio_file, output_file, audio_bitrate):
-    """Merge the trimmed audio and looped video into a final output."""
-    print(f"Merging audio and video: {video_file} + {audio_file} -> {output_file}")
+    """Ghép audio đã cắt và video đã lặp thành file đầu ra cuối cùng."""
+    print(f"Đang ghép audio và video: {video_file} + {audio_file} -> {output_file}")
     subprocess.run(
         ["ffmpeg", "-i", video_file, "-i", audio_file, "-c:v", "copy", "-c:a", "aac", "-map", '0:v',
          "-map", "1:a", output_file],
@@ -231,6 +341,10 @@ def main():
     bgm_file = config.get("bgm_file", "")
     bgm_volume = config.get("bgm_volume", 0.3)
     bgm_mode = config.get("bgm_mode", "folder")  # "folder" or "file"
+    crossfade = config.get("crossfade", False)  # crossfade option
+    crossfade_duration = config.get("crossfade_duration", 2.0)  # crossfade duration in seconds
+    audio_mode = config.get("audio_mode", "trim")  # "trim" (cắt theo độ dài) or "full" (ghép full folder)
+    audio_order = config.get("audio_order", "random")  # "random" or "sequential"
 
     # Ensure the output folder exists
     os.makedirs(output_folder, exist_ok=True)
@@ -246,11 +360,19 @@ def main():
     try:
         video_files = glob.glob(os.path.join(video_folder, "*.mp4"))
         for i in range(0, output_file):
-            # Generate random output length within range
-            output_length = random.randint(output_length_min, output_length_max)
-            print(f"\n=== Video {i+1}/{output_file} - Target length: {output_length} seconds ===")
-            
-            trim_mp3(audio_folder, trimmed_audio, output_length)
+            if audio_mode == "full":
+                # Ghép toàn bộ MP3 trong folder, độ dài video theo độ dài audio đã ghép
+                print(f"\n=== Video {i+1}/{output_file} - Full audio mode (order: {audio_order}) ===")
+                output_length = concat_full_mp3(
+                    audio_folder, trimmed_audio, order=audio_order,
+                    crossfade=crossfade, crossfade_duration=crossfade_duration
+                )
+            else:
+                # Generate random output length within range
+                output_length = random.randint(output_length_min, output_length_max)
+                print(f"\n=== Video {i+1}/{output_file} - Target length: {output_length} seconds ===")
+
+                trim_mp3(audio_folder, trimmed_audio, output_length, crossfade=crossfade, crossfade_duration=crossfade_duration)
             
             # Process BGM based on mode
             final_audio = trimmed_audio

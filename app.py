@@ -23,64 +23,109 @@ class App:
         self.bgm_file = tk.StringVar()  # file nhạc nền cố định
         self.bgm_volume = tk.StringVar()  # âm lượng BGM (0.0 - 1.0)
         self.bgm_mode = tk.StringVar(value="folder")  # "folder" hoặc "file"
+        self.crossfade = tk.BooleanVar(value=False)  # crossfade option
+        self.crossfade_duration = tk.StringVar(value="2.0")  # crossfade duration in seconds
+        self.audio_mode = tk.StringVar(value="trim")  # "trim" (cắt theo độ dài) hoặc "full" (ghép full folder)
+        self.audio_order = tk.StringVar(value="random")  # "random" hoặc "sequential"
 
         # Giao diện chọn thư mục
         self._create_folder_selector("Audio Folder:", self.audio_folder, 0)
         self._create_folder_selector("Video Folder:", self.video_folder, 1)
         self._create_folder_selector("Output Folder:", self.output_folder, 2)
         
+        # Audio Mode selection
+        tk.Label(root, text="Audio Mode:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        audio_mode_frame = tk.Frame(root)
+        audio_mode_frame.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        tk.Radiobutton(audio_mode_frame, text="Cắt theo độ dài (min-max)", variable=self.audio_mode, value="trim", command=self._on_audio_mode_change).pack(side="left")
+        tk.Radiobutton(audio_mode_frame, text="Ghép full folder", variable=self.audio_mode, value="full", command=self._on_audio_mode_change).pack(side="left")
+
+        # Audio Order selection (chỉ dùng cho chế độ ghép full)
+        tk.Label(root, text="Thứ tự ghép:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+        audio_order_frame = tk.Frame(root)
+        audio_order_frame.grid(row=4, column=1, sticky="w", padx=5, pady=5)
+        self.audio_order_random_rb = tk.Radiobutton(audio_order_frame, text="Ngẫu nhiên", variable=self.audio_order, value="random")
+        self.audio_order_random_rb.pack(side="left")
+        self.audio_order_seq_rb = tk.Radiobutton(audio_order_frame, text="Theo thứ tự tên file", variable=self.audio_order, value="sequential")
+        self.audio_order_seq_rb.pack(side="left")
+
         # BGM Mode selection
-        tk.Label(root, text="BGM Mode:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(root, text="BGM Mode:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
         bgm_mode_frame = tk.Frame(root)
-        bgm_mode_frame.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+        bgm_mode_frame.grid(row=5, column=1, sticky="w", padx=5, pady=5)
         tk.Radiobutton(bgm_mode_frame, text="Folder (Random)", variable=self.bgm_mode, value="folder", command=self._on_bgm_mode_change).pack(side="left")
         tk.Radiobutton(bgm_mode_frame, text="Fixed File", variable=self.bgm_mode, value="file", command=self._on_bgm_mode_change).pack(side="left")
-        
+
         # BGM Folder selector (store references for enabling/disabling)
-        tk.Label(root, text="BGM Folder:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(root, text="BGM Folder:").grid(row=6, column=0, sticky="e", padx=5, pady=5)
         self.bgm_folder_entry = tk.Entry(root, textvariable=self.bgm_folder, width=40)
-        self.bgm_folder_entry.grid(row=4, column=1, padx=5, pady=5)
+        self.bgm_folder_entry.grid(row=6, column=1, padx=5, pady=5)
         self.bgm_folder_btn = tk.Button(root, text="Chọn thư mục", command=lambda: self._select_folder(self.bgm_folder))
-        self.bgm_folder_btn.grid(row=4, column=2, padx=5, pady=5)
-        
+        self.bgm_folder_btn.grid(row=6, column=2, padx=5, pady=5)
+
         # BGM File selector (store references for enabling/disabling)
-        tk.Label(root, text="BGM File:").grid(row=5, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(root, text="BGM File:").grid(row=7, column=0, sticky="e", padx=5, pady=5)
         self.bgm_file_entry = tk.Entry(root, textvariable=self.bgm_file, width=40)
-        self.bgm_file_entry.grid(row=5, column=1, padx=5, pady=5)
+        self.bgm_file_entry.grid(row=7, column=1, padx=5, pady=5)
         self.bgm_file_btn = tk.Button(root, text="Chọn file", command=lambda: self._select_file(self.bgm_file))
-        self.bgm_file_btn.grid(row=5, column=2, padx=5, pady=5)
+        self.bgm_file_btn.grid(row=7, column=2, padx=5, pady=5)
 
         # Entry nhập thủ công
-        tk.Label(root, text="Output Length (min-max):").grid(row=6, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(root, text="Output Length (min-max):").grid(row=8, column=0, sticky="e", padx=5, pady=5)
         length_frame = tk.Frame(root)
-        length_frame.grid(row=6, column=1, sticky="w", padx=5, pady=5)
-        tk.Entry(length_frame, textvariable=self.output_length_min, width=10).pack(side="left")
+        length_frame.grid(row=8, column=1, sticky="w", padx=5, pady=5)
+        self.output_length_min_entry = tk.Entry(length_frame, textvariable=self.output_length_min, width=10)
+        self.output_length_min_entry.pack(side="left")
         tk.Label(length_frame, text=" - ").pack(side="left")
-        tk.Entry(length_frame, textvariable=self.output_length_max, width=10).pack(side="left")
+        self.output_length_max_entry = tk.Entry(length_frame, textvariable=self.output_length_max, width=10)
+        self.output_length_max_entry.pack(side="left")
         tk.Label(length_frame, text=" (seconds)").pack(side="left")
 
-        tk.Label(root, text="Audio Bitrate:").grid(row=7, column=0, sticky="e", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.audio_bitrate, width=30).grid(row=7, column=1, padx=5, pady=5)
+        tk.Label(root, text="Audio Bitrate:").grid(row=9, column=0, sticky="e", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.audio_bitrate, width=30).grid(row=9, column=1, padx=5, pady=5)
 
-        tk.Label(root, text="BGM Volume (0.0-1.0):").grid(row=8, column=0, sticky="e", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.bgm_volume, width=30).grid(row=8, column=1, padx=5, pady=5)
+        tk.Label(root, text="BGM Volume (0.0-1.0):").grid(row=10, column=0, sticky="e", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.bgm_volume, width=30).grid(row=10, column=1, padx=5, pady=5)
 
-        tk.Label(root, text="Group:").grid(row=9, column=0, sticky="e", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.videos_to_merge, width=30).grid(row=9, column=1, padx=5, pady=5)
+        tk.Label(root, text="Crossfade Audio:").grid(row=11, column=0, sticky="e", padx=5, pady=5)
+        tk.Checkbutton(root, text="Bật hiệu ứng chuyển mượt giữa các file audio", variable=self.crossfade).grid(row=11, column=1, sticky="w", padx=5, pady=5)
 
-        tk.Label(root, text="Outputs:").grid(row=10, column=0, sticky="e", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.random_videos, width=30).grid(row=10, column=1, padx=5, pady=5)
+        tk.Label(root, text="Crossfade Duration (s):").grid(row=12, column=0, sticky="e", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.crossfade_duration, width=30).grid(row=12, column=1, padx=5, pady=5)
+
+        tk.Label(root, text="Group:").grid(row=13, column=0, sticky="e", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.videos_to_merge, width=30).grid(row=13, column=1, padx=5, pady=5)
+
+        tk.Label(root, text="Outputs:").grid(row=14, column=0, sticky="e", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.random_videos, width=30).grid(row=14, column=1, padx=5, pady=5)
 
         # Nút lưu config và chạy xử lý
-        tk.Button(root, text="Lưu cấu hình", command=self.save_config).grid(row=11, column=0, pady=15)
-        tk.Button(root, text="Chạy xử lý", command=self.run_main).grid(row=11, column=1, pady=15)
+        tk.Button(root, text="Lưu cấu hình", command=self.save_config).grid(row=15, column=0, pady=15)
+        tk.Button(root, text="Chạy xử lý", command=self.run_main).grid(row=15, column=1, pady=15)
 
         # Trạng thái
         self.status = tk.Label(root, text="Trạng thái: Sẵn sàng", fg="blue")
-        self.status.grid(row=12, column=0, columnspan=2, pady=5)
+        self.status.grid(row=16, column=0, columnspan=2, pady=5)
 
         self.load_config()
         self._on_bgm_mode_change()  # Set initial state
+        self._on_audio_mode_change()  # Set initial state
+
+    def _on_audio_mode_change(self):
+        """Enable/disable output length or audio order inputs based on audio mode."""
+        mode = self.audio_mode.get()
+        if mode == "full":
+            # Ghép full folder: không cần độ dài, cho chọn thứ tự ghép
+            self.output_length_min_entry.config(state="disabled")
+            self.output_length_max_entry.config(state="disabled")
+            self.audio_order_random_rb.config(state="normal")
+            self.audio_order_seq_rb.config(state="normal")
+        else:
+            # Cắt theo độ dài: cần min-max, thứ tự ghép không áp dụng
+            self.output_length_min_entry.config(state="normal")
+            self.output_length_max_entry.config(state="normal")
+            self.audio_order_random_rb.config(state="disabled")
+            self.audio_order_seq_rb.config(state="disabled")
 
     def _on_bgm_mode_change(self):
         """Enable/disable BGM folder or file inputs based on selected mode."""
@@ -138,16 +183,26 @@ class App:
             self.bgm_file.set(config.get("bgm_file", ""))
             self.bgm_volume.set(str(config.get("bgm_volume", "0.3")))
             self.bgm_mode.set(config.get("bgm_mode", "folder"))
+            self.crossfade.set(config.get("crossfade", False))
+            self.crossfade_duration.set(str(config.get("crossfade_duration", "2.0")))
+            self.audio_mode.set(config.get("audio_mode", "trim"))
+            self.audio_order.set(config.get("audio_order", "random"))
         except Exception as e:
             messagebox.showwarning("Cảnh báo", f"Không thể đọc config: {e}")
 
     def save_config(self):
         try:
-            output_length_min_int = int(self.output_length_min.get())
-            output_length_max_int = int(self.output_length_max.get())
+            if self.audio_mode.get() == "full":
+                # Chế độ ghép full không dùng độ dài, cho phép để trống
+                output_length_min_int = int(self.output_length_min.get()) if self.output_length_min.get() else 0
+                output_length_max_int = int(self.output_length_max.get()) if self.output_length_max.get() else 0
+            else:
+                output_length_min_int = int(self.output_length_min.get())
+                output_length_max_int = int(self.output_length_max.get())
             random_videos_int = int(self.random_videos.get()) if self.random_videos.get() else 0
             videos_to_merge_int = int(self.videos_to_merge.get()) if self.videos_to_merge.get() else 0
             bgm_volume_float = float(self.bgm_volume.get()) if self.bgm_volume.get() else 0.3
+            crossfade_duration_float = float(self.crossfade_duration.get()) if self.crossfade_duration.get() else 2.0
             config = {
                 "audio_folder": self.audio_folder.get(),
                 "video_folder": self.video_folder.get(),
@@ -161,6 +216,10 @@ class App:
                 "bgm_file": self.bgm_file.get(),
                 "bgm_volume": bgm_volume_float,
                 "bgm_mode": self.bgm_mode.get(),
+                "crossfade": self.crossfade.get(),
+                "crossfade_duration": crossfade_duration_float,
+                "audio_mode": self.audio_mode.get(),
+                "audio_order": self.audio_order.get(),
             }
             with open(CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=2)
